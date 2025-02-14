@@ -2,8 +2,6 @@ import weaviate
 from weaviate.auth import AuthApiKey
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
-import embed_anything
-from embed_anything import EmbeddingModel, WhichModel
 from typing import Dict, List, Union, Any
 from dotenv import load_dotenv
 import os
@@ -12,8 +10,12 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.text_splitter import Language
 import uvicorn
 import time
+import requests
 
 load_dotenv()
+
+HUGGINGFACE_API_URL =  "https://iysce8fn6758qeok.us-east-1.aws.endpoints.huggingface.cloud"
+HUGGINGFACE_API_KEY =  "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"
 
 app = FastAPI()
 
@@ -23,19 +25,25 @@ client = weaviate.Client(
     auth_client_secret=AuthApiKey("eR9Rwv5Xo8iJKggYuBMCiR0ZpO8yLKs4WjpW"),
 )
 
-# Initialize the Jina embedding model
-jina_model = EmbeddingModel.from_pretrained_hf(
-    WhichModel.Jina, model_id="jinaai/jina-embeddings-v2-small-en"
-)
+class HuggingFaceEmbeddings:
+    def __init__(self, api_url: str, api_key: str):
+        self.api_url = api_url
+        self.headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
 
-class JinaEmbeddingWrapper:
-    def __init__(self, model):
-        self.model = model
+    def embed_query(self, text: str) -> List[float]:
+        response = requests.post(
+            self.api_url,
+            headers=self.headers,
+            json={"inputs": text}
+        )
+        if response.status_code != 200:
+            raise ValueError(f"API request failed: {response.text}")
+        return response.json()[0]
 
-    def embed_query(self, text):
-        return embed_anything.embed_query([text], self.model)[0].embedding
-
-jina_embeddings = JinaEmbeddingWrapper(jina_model)
+embeddings = HuggingFaceEmbeddings(HUGGINGFACE_API_URL, HUGGINGFACE_API_KEY)
 
 def recursive_chunks(content: str) -> List[str]:
     """Split content into chunks using LangChain's recursive splitter."""
@@ -53,7 +61,7 @@ def recursive_chunks(content: str) -> List[str]:
 def store_chunks_in_weaviate(chunks: List[str]) -> Dict[str, Any]:
     """Store chunks in Weaviate with embeddings."""
     stored_count = 0
-    batch_size = 50  # Reduced batch size
+    batch_size = 50
     retry_count = 3
     
     try:
@@ -84,7 +92,7 @@ def store_chunks_in_weaviate(chunks: List[str]) -> Dict[str, Any]:
                             print(f"Chunk content preview: {chunk[:100]}...")
                                 
                             # Get embedding for the chunk
-                            embedding = embed_anything.embed_query([chunk], jina_model)[0].embedding
+                            embedding = embeddings.embed_query(chunk)
                             
                             # Store in Weaviate
                             properties = {
@@ -129,7 +137,7 @@ class QueryRequest(BaseModel):
 @app.post("/search")
 async def search_documents(request: QueryRequest) -> Dict[str, Union[str, List[dict]]]:
     try:
-        query_vector = jina_embeddings.embed_query(request.query)
+        query_vector = embeddings.embed_query(request.query)
         
         # Get more initial results for better coverage
         result = (
