@@ -5,7 +5,7 @@ python-dotenv==1.0.0
 pydantic==2.4.2
 typing-extensions==4.8.0
 python-multipart==0.0.6
-pymupdf4llm==0.1.2
+pymupdf4llm==0.0.17
 langchain==0.0.350
 gunicorn==21.2.0
 requests==2.31.0
